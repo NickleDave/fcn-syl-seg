@@ -1,3 +1,4 @@
+import os
 from glob import glob
 import random
 
@@ -235,8 +236,12 @@ def load_data(labels_mapping,
     # need to keep track of name of files used
     # since we may skip some
     cbins_used = []
-
-    cbins = glob(data_dir + '*.cbin')
+    if not os.path.isdir(data_dir):
+        raise NotADirectoryError('String supllied for data_dir, '
+                                 '{}, is not a valid directory'
+                                 .format(data_dir))
+    cbin_str = os.path.join(data_dir, '*.cbin')
+    cbins = glob(cbin_str)
     for cbin in cbins:
         dat, fs = evfuncs.load_cbin(cbin)
         notmat_dict = evfuncs.load_notmat(cbin)
@@ -299,10 +304,10 @@ def load_data(labels_mapping,
                          .format(number_files, data_dir))
     timebin_dur = np.around(np.mean(np.diff(timebins)), decimals=3)
 
-    return_tup = (all_song_spects,)
+    return_tup = (all_song_spects, all_labeled_timebin_vecs)
     if return_syl_spects:
-        return_tup += (all_syl_spects,)
-    return_tup += (all_labels, timebin_dur, cbins_used)
+        return_tup += (all_syl_spects, all_labels)
+    return_tup += (timebin_dur, cbins_used)
     return return_tup
 
 

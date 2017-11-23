@@ -69,16 +69,16 @@ if __name__ == "__main__":
     train_data_dir = config['DATA']['train_data_dir']
     number_train_song_files = int(config['DATA']['number_train_song_files'])
     skip_files_with_labels_not_in_labelset = config.getboolean(
-        ['DATA'],
-        ['skip_files_with_labels_not_in_labelset'])
-    train_encoder = config.getboolean(['TRAIN'], ['train_encoder'])
+        'DATA',
+        'skip_files_with_labels_not_in_labelset')
+    train_encoder = config.getboolean('TRAIN', 'train_encoder')
     if train_encoder:
         return_syl_spects = True
         # because we train encoder with spectrograms of individual syllables
         # centered in a window, so that each spectrogram is the same size
         # and so that encoder learns some "context" about neighboring syllables
         try:
-            encoder_input_width = config['TRAIN']['encoder_input_width']
+            encoder_input_width = float(config['TRAIN']['encoder_input_width'])
         except NoOptionError:
             print('.ini files specifies train_encoder = Yes,'
                   'but no value for encoder_input_width was specified.\n'
@@ -87,6 +87,7 @@ if __name__ == "__main__":
             raise  # re-raise NoOptionError
     else:
         return_syl_spects = False
+        encoder_input_width = None
 
     logger.info('Loading training data from {}'.format(train_data_dir))
     logger.info('Using {} song files for training set'
@@ -96,14 +97,20 @@ if __name__ == "__main__":
                                      number_train_song_files,
                                      spect_params,
                                      skip_files_with_labels_not_in_labelset,
-                                     return_syl_spects)
+                                     return_syl_spects,
+                                     encoder_input_width)
     if return_syl_spects:
-        song_spects, syl_spects, all_labels, timebin_dur, cbins_used = return_tup
+        (song_spects, all_labeled_timebin_vectors,
+         syl_spects, all_labels,
+         timebin_dur, cbins_used) = return_tup
     else:
-        song_spects, all_labels, timebin_dur, cbins_used = return_tup
+        (song_spects, all_labeled_timebin_vectors,
+         timebin_dur, cbins_used) = return_tup
     cbins_used_filename = os.path.join(results_dirname, 'cbins_used')
-    with open(cbins_used_filename,'wb') as cbins_used_file:
+    with open(cbins_used_filename, 'wb') as cbins_used_file:
         pickle.dump(cbins_used, cbins_used_file)
+
+    import pdb;pdb.set_trace()
 
     logger.info('Size of each timebin in spectrogram, in seconds: {}'
                 .format(timebin_dur))
@@ -115,8 +122,7 @@ if __name__ == "__main__":
     num_train_songs = int(config['DATA']['num_train_songs'])
     train_spects = song_spects[:num_train_songs]
     X_train_timebins = np.array(
-        [spec.shape[0] for spec in train_spects]
-        # spec.shape[0] because rows are time bins
+        [spec.shape[1] for spec in train_spects]
     )  # convert to seconds by multiplying by size of time bin
     X_train_durations = X_train_timebins * timebin_dur
     total_train_set_duration = sum(X_train_durations)
@@ -210,19 +216,6 @@ if __name__ == "__main__":
     normalize_spectrograms = config.getboolean('DATA', 'normalize_spectrograms')
     if normalize_spectrograms:
         logger.info('will normalize spectrograms for each training set')
-
-    # gpu = config['NETWORK']['GPU']
-    # try:
-    #     gpu = int(gpu)
-    #     logger.info('using gpu {}'.format(gpu))
-    # except ValueError:
-    #     if gpu == 'None':  # None means use whichever gpu is default
-    #         gpu = None
-    #         logger.info('using default gpu')
-    #     else:
-    #         raise TypeError('gpu must be an int or None, but'
-    #                         'is {} and parsed as type {}'
-    #                         .format(patience, type(patience)))
 
     for train_set_dur in TRAIN_SET_DURS:
         for replicate in REPLICATES:

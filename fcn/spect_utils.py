@@ -85,44 +85,56 @@ def make_syl_spects(spect,
                       'the spectrogram, and additionally consume a lot '
                       'of memory.')
 
-    all_syls = []
+    timebin_dur = np.around(np.mean(np.diff(timebins)), decimals=3)
+    syl_spect_width_bins = syl_spect_width / timebin_dur
+    if not syl_spect_width_bins.is_integer():
+        raise ValueError('the syl_spect_width in seconds, {},'
+                         'divided by the duration of each time bin,'
+                         '{}, does not give a whole number of bins.'
+                         'Instead it gives {}.'
+                         .format(syl_spect_width,
+                                 timebin_dur,
+                                 syl_spect_width_bins))
+    else:
+        # need to convert to int (type) to use for indexing
+        syl_spect_width_bins = int(syl_spect_width_bins)
 
-    for ind, (label, onset, offset) in enumerate(zip(labels, onsets, offsets)):
+    all_syl_spects = np.empty((len(labels),
+                               spect.shape[0],
+                               syl_spect_width_bins))
+    onset_IDs_in_time_bins = [np.argmin(np.abs(timebins - onset)) for onset in
+                              onsets]
+    offset_IDs_in_time_bins = [np.argmin(np.abs(timebins - offset)) for offset
+                               in offsets]
 
+    for ind, (label, onset, offset) in enumerate(zip(labels,
+                                                     onset_IDs_in_time_bins,
+                                                     offset_IDs_in_time_bins)):
         syl_duration = offset - onset
-        if syl_duration > syl_spect_width:
+        if syl_duration > syl_spect_width_bins:
             raise ValueError('syllable duration of syllable {} with label {} '
                              'in file {} is greater than '
                              'width specified for all syllable spectrograms.'
                              .format(ind, label, filename))
-
-        width_diff = syl_spect_width_Hz - syl_duration_in_samples
+        width_diff = syl_spect_width_bins - syl_duration
         # take half of difference between syllable duration and spect width
         # so one half of 'empty' area will be on one side of spect
         # and the other half will be on other side
         # i.e., center the spectrogram
         left_width = int(round(width_diff / 2))
         right_width = width_diff - left_width
-        if left_width > onset:  # if duration before onset is less than left_width
+        if left_width > onset:
+            # if duration before onset is less than left_width
             # (could happen with first onset)
-            syl_audio = self.rawAudio[0:syl_spect_width_Hz]
-        elif offset + right_width > self.rawAudio.shape[-1]:
+            # then just align start of window with start of song
+            syl_spect = spect[:, 0:syl_spect_width_bins]
+        elif offset + right_width > spect.shape[-1]:
             # if right width greater than length of file
-            syl_audio = self.rawAudio[-syl_spect_width_Hz:]
+            # then just align end of window at end of song
+            syl_spect = spect[:, -syl_spect_width_bins:]
         else:
-            syl_audio = self.rawAudio[onset - left_width:offset + right_width]
+            syl_spect = spect[:, onset - left_width:offset + right_width]
 
-        except WindowError as err:
-            warnings.warn('Segment {0} in {1} with label {2} '
-                          'not long enough for window function'
-                          ' set with current spect_params.\n'
-                          'spect will be set to nan.'
-                          .format(ind, self.filename, label))
-            spect, freq_bins, time_bins = (np.nan,
-                                           np.nan,
-                                           np.nan)
+        all_syl_spects[ind, :, :] = syl_spect
 
-
-        all_syls.append(curr_syl)
-
-    return np.stack([syl.spect for syl in all_syls])
+    return all_syl_spects
