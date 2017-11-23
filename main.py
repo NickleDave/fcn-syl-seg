@@ -7,31 +7,28 @@ import pickle
 from datetime import datetime
 from configparser import ConfigParser, NoOptionError
 
-
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
 import numpy as np
 from sklearn.externals import joblib
 
-from cnn_bilstm.graphs import get_full_graph
-import cnn_bilstm.utils
+import fcn.models
+import fcn.utils
 
 if __name__ == "__main__":
-
-
     config_file = sys.argv[1]
     if not config_file.endswith('.ini'):
-        raise ValueError('{} is not a valid config file, must have .ini extension'
+        raise ValueError('{} is not a valid config file, '
+                         'must have .ini extension'
                          .format(config_file))
     config = ConfigParser()
     config.read(config_file)
 
     timenow = datetime.now().strftime('%y%m%d_%H%M%S')
     if config.has_section('OUTPUT'):
-        if config.has_option('OUTPUT','output_dir'):
-            output_dir = config['OUTPUT']['output_dir']
-            results_dirname = os.path.join(output_dir,
-                                           'results_' + timenow)
+        output_dir = config['OUTPUT']['output_dir']
+        results_dirname = os.path.join(output_dir,
+                                       'results_' + timenow)
     else:
         results_dirname = os.path.join('.', 'results_' + timenow)
     os.mkdir(results_dirname)
@@ -39,7 +36,8 @@ if __name__ == "__main__":
     shutil.copy(config_file, results_dirname)
 
     logfile_name = os.path.join(results_dirname,
-                                'metadata_from_running_main_' + timenow + '.log')
+                                'metadata_from_running_main_'
+                                + timenow + '.log')
     logger = logging.getLogger(__name__)
     logger.setLevel('INFO')
     logger.addHandler(logging.FileHandler(logfile_name))
@@ -53,26 +51,60 @@ if __name__ == "__main__":
             if spect_param_name == 'freq_cutoffs':
                 freq_cutoffs = [float(element)
                                 for element in
-                                config['SPECTROGRAM']['freq_cutoffs'].split(',')]
+                                config['SPECTROGRAM']['freq_cutoffs']
+                                .split(',')]
                 spect_params['freq_cutoffs'] = freq_cutoffs
             elif spect_param_name == 'thresh':
                 spect_params['thresh'] = float(config['SPECTROGRAM']['thresh'])
-
         except NoOptionError:
-            logger.info('Parameter for computing spectrogram, {}, not specified. '
+            logger.info('Parameter for computing spectrogram, '
+                        '{}, not specified. '
                         'Will use default.'.format(spect_param_name))
             continue
 
     print('loading data for training')
     labelset = list(config['DATA']['labelset'])
-    data_dir = config['DATA']['data_dir']
-    number_song_files = int(config['DATA']['number_song_files'])
-    logger.info('Loading training data from {}'.format(data_dir))
-    logger.info('Using first {} songs'.format(number_song_files))
-    song_spects, all_labels, timebin_dur = cnn_bilstm.utils.load_data(labelset,
-                                                                      data_dir,
-                                                                      number_song_files,
-                                                                      spect_params)
+    label_mapping = dict(zip(labelset,
+                             range(1, len(labelset)+1)))
+    train_data_dir = config['DATA']['train_data_dir']
+    number_train_song_files = int(config['DATA']['number_train_song_files'])
+    skip_files_with_labels_not_in_labelset = config.getboolean(
+        ['DATA'],
+        ['skip_files_with_labels_not_in_labelset'])
+    train_encoder = config.getboolean(['TRAIN'], ['train_encoder'])
+    if train_encoder:
+        return_syl_spects = True
+        # because we train encoder with spectrograms of individual syllables
+        # centered in a window, so that each spectrogram is the same size
+        # and so that encoder learns some "context" about neighboring syllables
+        try:
+            encoder_input_width = config['TRAIN']['encoder_input_width']
+        except NoOptionError:
+            print('.ini files specifies train_encoder = Yes,'
+                  'but no value for encoder_input_width was specified.\n'
+                  'Encoder_input_width is required, should be duration'
+                  'of spectrogram window centered on syllable in seconds')
+            raise  # re-raise NoOptionError
+    else:
+        return_syl_spects = False
+
+    logger.info('Loading training data from {}'.format(train_data_dir))
+    logger.info('Using {} song files for training set'
+                .format(number_train_song_files))
+    return_tup = fcn.utils.load_data(label_mapping,
+                                     train_data_dir,
+                                     number_train_song_files,
+                                     spect_params,
+                                     skip_files_with_labels_not_in_labelset,
+                                     return_syl_spects)
+    if return_syl_spects:
+        song_spects, syl_spects, all_labels, timebin_dur, cbins_used = return_tup
+    else:
+        song_spects, all_labels, timebin_dur, cbins_used = return_tup
+    cbins_used_filename = os.path.join(results_dirname, 'cbins_used')
+    with open(cbins_used_filename,'wb') as cbins_used_file:
+        pickle.dump(cbins_used, cbins_used_file)
+
     logger.info('Size of each timebin in spectrogram, in seconds: {}'
                 .format(timebin_dur))
 

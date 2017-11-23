@@ -3,7 +3,8 @@ import random
 
 import numpy as np
 
-from . import evfuncs, spect_utils
+from . import evfuncs
+from .spect_utils import butter_bandpass_filter, spectrogram, make_syl_spects
 
 
 # adapted from:
@@ -109,22 +110,28 @@ class SpectScaler:
         return self.transform(spects)
 
 
-def make_labels_mapping(data_dir):
-    """make mapping
+def make_labels_mapping(data_dirs):
+    """make_labels_mapping_mapping
     from the set of unique string labels: [i,a,b,c,d,h,j,k]
     to a sequence of integers: [0,1,2,3,...
     for converting labels into integers
     that can then be converted to one-hot vectors
     for training outputs of a neural network"""
-    notmats = glob(data_dir + '*.not.mat')
+
+    if type(data_dirs) == str:  # if just one directory name
+        # put into a list so code below works
+        data_dirs = [data_dirs]
+
+    if type(data_dirs) != list:
+        raise TypeError('data_dirs should be a list but is {}'
+                        .format(type(data_dirs)))
+
     labels = []
-    for notmat in notmats:
-        notmat_dict = evfuncs.load_notmat(notmat)
-        label_arr = np.asarray([ord(label)
-                                for label in notmat_dict['labels']]
-                               )
-        labels.append(label_arr)
-    labels = np.concatenate(labels)
+    for data_dir in data_dirs:
+        notmats = glob(data_dir + '*.not.mat')
+        for notmat in notmats:
+            notmat_dict = evfuncs.load_notmat(notmat)
+            labels.extend(list(notmat_dict['labels']))
     uniq_labels = np.unique(labels)
     labels_to_map_to = range(1, uniq_labels.shape[-1] + 1)
     # skip 0 so 0 can be used as label for 'silent gap' across training/testing data
@@ -171,14 +178,20 @@ def make_labeled_timebins_vector(labels,
     return label_vec
 
 
-def load_data(labelset, data_dir, number_files, spect_params):
+def load_data(labels_mapping,
+              data_dir,
+              number_files,
+              spect_params,
+              skip_files_with_labels_not_in_labelset,
+              return_syl_spects=False,
+              syl_spect_width=None):
     """
 
     Parameters
     ----------
-    labelset : list
-        all labels to consider in song
-        e.g., 'iabcdefghjk'
+    labels_mapping : dict
+        dict that maps string labels to a integer values 0 through n,
+        where n is the number of labels
     data_dir : str
         directory of data
     number_files : int
@@ -186,6 +199,17 @@ def load_data(labelset, data_dir, number_files, spect_params):
         assumes files is cbins
     spect_params : dict
         parameters for computing spectrogram. Loaded by main.py from .ini file.
+    skip_files_with_labels_not_in_labelset : bool
+        if True, skips files where labels includes a label not found in labels_mapping.
+        To avoid training/testing on labels that rarely occur.
+        Default is True.
+    return_syl_spects : bool
+        if True, return spectrograms for each syllable
+    syl_spect_width : float
+        Parameter to set constant duration for each spectrogram of a
+        syllable, in seconds.
+        E.g., 0.3 for 300 ms window centered on syllable.
+        Default is 0.12, 120 ms.
 
     Returns
     -------
@@ -198,40 +222,88 @@ def load_data(labelset, data_dir, number_files, spect_params):
         estimated from last spectrogram processed
     """
 
-    labels_mapping = make_labels_mapping(data_dir)
-    cbins = glob(data_dir + '*.cbin')
-    song_spects = []
-    all_labels = []
-    for cbin in cbins[:number_files]:
-        dat, fs = evfuncs.load_cbin(cbin)
-        if 'freq_cutoffs' in spect_params:
-            dat = spect_utils.butter_bandpass_filter(dat,
-                                                     spect_params['freq_cutoffs'][0],
-                                                     spect_params['freq_cutoffs'][1],
-                                                     fs)
+    if return_syl_spects and syl_spect_width is None:
+        raise ValueError('return_syl_spects set to True but '
+                         'no value specified for syl_spect_width')
 
-        spect, freqbins, timebins = spect_utils.spectrogram(dat, fs,
-                                                            thresh=spect_params['thresh'])
+    all_song_spects = []
+    if return_syl_spects:
+        all_syl_spects = []
+    all_labels = []
+    all_labeled_timebin_vecs = []
+    counter = 0
+    # need to keep track of name of files used
+    # since we may skip some
+    cbins_used = []
+
+    cbins = glob(data_dir + '*.cbin')
+    for cbin in cbins:
+        dat, fs = evfuncs.load_cbin(cbin)
+        notmat_dict = evfuncs.load_notmat(cbin)
+        labels = notmat_dict['labels']
+        if skip_files_with_labels_not_in_labelset:
+            labels_set = set(labels)
+            # below, set(labels_mapping) is a set of that dict's keys
+            if labels_set > set(labels_mapping):
+                # because there's some label in labels
+                # that's not in labels_mapping
+                continue  # skip that file
+
         if 'freq_cutoffs' in spect_params:
+            dat = butter_bandpass_filter(dat,
+                                         spect_params['freq_cutoffs'][0],
+                                         spect_params['freq_cutoffs'][1],
+                                         fs)
+
+        spect, freqbins, timebins = spectrogram(dat,
+                                                fs,
+                                                thresh=spect_params['thresh'])
+        if 'freq_cutoffs' in spect_params:
+            # f_inds = np.nonzero(...)[0] because nonzero returns tuple
             f_inds = np.nonzero((freqbins >= spect_params['freq_cutoffs'][0]) &
-                                (freqbins < spect_params['freq_cutoffs'][1]))[0]  # returns tuple
+                                (freqbins < spect_params['freq_cutoffs'][1]))[0]
             spect = spect[f_inds, :]
 
-        #####################################################
-        # note that we 'transpose' the spectrogram          #
-        # so that rows are time and columns are frequencies #
-        #####################################################
-        song_spects.append(spect.T)
-        notmat_dict = evfuncs.load_notmat(cbin)
-        labels = [labels_mapping[ord(label)]
+        all_song_spects.append(spect)
+
+        labels = [labels_mapping[label]
                   for label in notmat_dict['labels']]
-        labels = make_labeled_timebins_vector(labels,
-                                              notmat_dict['onsets']/1000,
-                                              notmat_dict['offsets']/1000,
-                                              timebins)
+        # get onsets and offsets, divide by 1000 to convert from ms to s
+        onsets = notmat_dict['onsets']/1000
+        offsets = notmat_dict['offsets']/1000
+        labeled_timebin_vec = make_labeled_timebins_vector(labels,
+                                                           onsets,
+                                                           offsets,
+                                                           timebins)
         all_labels.append(labels)
+        all_labeled_timebin_vecs.append(labeled_timebin_vec)
+
+        if return_syl_spects:
+            syl_spects = make_syl_spects(spect,
+                                         cbin,
+                                         timebins,
+                                         labels,
+                                         onsets,
+                                         offsets,
+                                         syl_spect_width)
+            all_syl_spects.append(syl_spects)
+
+        counter = counter + 1
+        cbins_used.append(cbin)
+        if counter == number_files:
+            break
+
+    if counter < number_files:
+        raise ValueError('Less than number of files requested, {}, '
+                         'in directory {}'
+                         .format(number_files, data_dir))
     timebin_dur = np.around(np.mean(np.diff(timebins)), decimals=3)
-    return song_spects, all_labels, timebin_dur
+
+    return_tup = (all_song_spects,)
+    if return_syl_spects:
+        return_tup += (all_syl_spects,)
+    return_tup += (all_labels, timebin_dur, cbins_used)
+    return return_tup
 
 
 def get_inds_for_dur(song_timebins,
