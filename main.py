@@ -99,18 +99,18 @@ if __name__ == "__main__":
                                      skip_files_with_labels_not_in_labelset,
                                      return_syl_spects,
                                      encoder_input_width)
+    # unpack returned tuple
     if return_syl_spects:
         (song_spects, all_labeled_timebin_vectors,
          syl_spects, all_labels,
          timebin_dur, cbins_used) = return_tup
+        syl_spects_copy = copy.deepcopy(syl_spects)  # to use for normalizing
     else:
         (song_spects, all_labeled_timebin_vectors,
          timebin_dur, cbins_used) = return_tup
     cbins_used_filename = os.path.join(results_dirname, 'cbins_used')
     with open(cbins_used_filename, 'wb') as cbins_used_file:
         pickle.dump(cbins_used, cbins_used_file)
-
-    import pdb;pdb.set_trace()
 
     logger.info('Size of each timebin in spectrogram, in seconds: {}'
                 .format(timebin_dur))
@@ -141,20 +141,22 @@ if __name__ == "__main__":
     logger.info('Will train network with training sets of '
                 'following durations (in s): {}'.format(TRAIN_SET_DURS))
 
-    X_train = np.concatenate(train_spects, axis=0)
+    X_train = np.concatenate(train_spects, axis=1)
     # save training set to get training accuracy in summary.py
     joblib.dump(X_train, os.path.join(results_dirname, 'X_train'))
-    Y_train = np.concatenate(all_labels[:num_train_songs], axis=0)
+    Y_train = np.concatenate(all_labeled_timebin_vectors[:num_train_songs],
+                             axis=0)
 
     num_replicates = int(config['TRAIN']['replicates'])
     REPLICATES = range(num_replicates)
-    logger.info('will replicate training {} times for each duration of training set'
+    logger.info('will replicate training {} times '
+                'for each duration of training set'
                 .format(num_replicates))
 
     num_val_songs = int(config['DATA']['num_val_songs'])
     logger.info('validation set used during training will contain {} songs'
                 .format(num_val_songs))
-    if num_train_songs + num_val_songs > number_song_files:
+    if num_train_songs + num_val_songs > number_train_song_files:
         raise ValueError('Total number of training songs ({0}), '
                          'and validation songs ({1}), '
                          'is {2}.\n This is greater than the number of '
@@ -165,12 +167,11 @@ if __name__ == "__main__":
                          .format(num_train_songs,
                                  num_val_songs,
                                  num_train_songs + num_val_songs,
-                                 number_song_files))
+                                 number_train_song_files))
     X_val = song_spects[-num_val_songs:]
     joblib.dump(X_val, os.path.join(results_dirname, 'X_val'))
     X_val_copy = copy.deepcopy(X_val)  # need a copy if we scale X_val below
-    Y_val = all_labels[-num_val_songs:]
-
+    Y_val = all_labeled_timebin_vectors[-num_val_songs:]
     Y_val_arr = np.concatenate(Y_val, axis=0)
 
     val_error_step = int(config['TRAIN']['val_error_step'])
@@ -180,11 +181,13 @@ if __name__ == "__main__":
     logger.info('will save a checkpoint file '
                 'every {} steps of training'.format(checkpoint_step))
     save_only_single_checkpoint_file = config.getboolean('TRAIN',
-                                                         'save_only_single_checkpoint_file')
+                                                         'save_only_single_'
+                                                         'checkpoint_file')
     if save_only_single_checkpoint_file:
         logger.info('save_only_single_checkpoint_file = True\n'
                     'will save only one checkpoint file'
-                    'and overwrite every {} steps of training'.format(checkpoint_step))
+                    'and overwrite every {} steps of training'
+                    .format(checkpoint_step))
     else:
         logger.info('save_only_single_checkpoint_file = False\n'
                     'will save a separate checkpoint file '
@@ -219,42 +222,46 @@ if __name__ == "__main__":
 
     for train_set_dur in TRAIN_SET_DURS:
         for replicate in REPLICATES:
-            costs = []
-            val_errs = []
-            curr_min_err = 1  # i.e. 100%
-            err_patience_counter = 0
-
             logger.info("training with training set duration of {} seconds,"
                         "replicate #{}".format(train_set_dur, replicate))
-            training_records_dir = os.path.join(results_dirname,
-                ('records_for_training_set_with_duration_of_'
-                                    + str(train_set_dur) + '_sec_replicate_'
-                                    + str(replicate))
-                                                )
+            training_records_dirname = ('records_for_training_set_'
+                                        'with_duration_of_'
+                                        + str(train_set_dur) + '_sec_replicate_'
+                                        + str(replicate))
+            training_records_dirname = os.path.join(results_dirname,
+                                                    training_records_dirname)
             checkpoint_filename = ('checkpoint_train_set_dur_'
                                    + str(train_set_dur) +
                                    '_sec_replicate_'
                                    + str(replicate))
-            if not os.path.isdir(training_records_dir):
-                os.mkdir(training_records_dir)
-            train_inds = cnn_bilstm.utils.get_inds_for_dur(X_train_timebins,
-                                                           train_set_dur,
-                                                           timebin_dur)
-            with open(os.path.join(training_records_dir, 'train_inds'),
+            if not os.path.isdir(training_records_dirname):
+                os.mkdir(training_records_dirname)
+            train_inds = fcn.utils.get_inds_for_dur(X_train_timebins,
+                                                    train_set_dur,
+                                                    timebin_dur)
+            with open(os.path.join(training_records_dirname, 'train_inds'),
                       'wb') as train_inds_file:
                 pickle.dump(train_inds, train_inds_file)
-            X_train_subset = X_train[train_inds, :]
+            X_train_subset = X_train[:, train_inds]
             Y_train_subset = Y_train[train_inds]
 
             if normalize_spectrograms:
-                spect_scaler = cnn_bilstm.utils.SpectScaler()
-                X_train_subset = spect_scaler.fit_transform(X_train_subset)
+                spect_scaler = fcn.utils.SpectScaler()
+                X_train_subset = spect_scaler.fit_transform(X_train_subset.T)
+                logger.info('normalizing individual syllable spectrograms')
+                syl_spects = np.transpose(syl_spects_copy, axes=[0, 2, 1])
+                syl_spects = spect_scaler.transform(syl_spects)
+                syl_spects = np.transpose(syl_spects_copy, axes=[0, 2, 1])
                 logger.info('normalizing validation set to match training set')
-                X_val = spect_scaler.transform(X_val_copy)
+                X_val = spect_scaler.transform([x_val_spec.T
+                                                for x_val_spec in X_val_copy])
+                # rotate back after rotating
+                X_val = [x_val_spec.T for x_val_spec in X_val]
                 scaler_name = ('spect_scaler_duration_{}_replicate_{}'
                                .format(train_set_dur, replicate))
                 joblib.dump(spect_scaler,
                             os.path.join(results_dirname, scaler_name))
+
 
             batch_spec_rows = len(train_inds) // batch_size
             X_train_subset = \
@@ -367,7 +374,8 @@ if __name__ == "__main__":
                                 # error went down, set as new min and reset counter
                                 curr_min_err = val_errs[-1]
                                 err_patience_counter = 0
-                                checkpoint_path = os.path.join(training_records_dir, checkpoint_filename)
+                                checkpoint_path = os.path.join(training_records_dirname,
+                                                               checkpoint_filename)
                                 print("Validation error improved.\n"
                                       "Saving checkpoint to {}".format(checkpoint_path))
                                 saver.save(sess, checkpoint_path)
@@ -376,20 +384,24 @@ if __name__ == "__main__":
                                 if err_patience_counter > patience:
                                     print("stopping because validation error has not improved in {} steps"
                                           .format(patience))
-                                    with open(os.path.join(training_records_dir, "costs"), 'wb') as costs_file:
+                                    with open(os.path.join(training_records_dirname,
+                                                           "costs"), 'wb') as costs_file:
                                         pickle.dump(costs, costs_file)
-                                    with open(os.path.join(training_records_dir, "val_errs"), 'wb') as val_errs_file:
+                                    with open(os.path.join(training_records_dirname,
+                                                           "val_errs"), 'wb') as val_errs_file:
                                         pickle.dump(val_errs, val_errs_file)
                                     break
 
                     if checkpoint_step:
                         if step % checkpoint_step == 0:
                             "Saving checkpoint."
-                            checkpoint_path = os.path.join(training_records_dir, checkpoint_filename)
+                            checkpoint_path = os.path.join(training_records_dirname,
+                                                           checkpoint_filename)
                             if save_only_single_checkpoint_file is False:
                                 checkpoint_path += '_{}'.format(step)
                             saver.save(sess, checkpoint_path)
-                            with open(os.path.join(training_records_dir, "val_errs"), 'wb') as val_errs_file:
+                            with open(os.path.join(training_records_dirname,
+                                                   "val_errs"), 'wb') as val_errs_file:
                                 pickle.dump(val_errs, val_errs_file)
 
                     if step > n_max_iter:  # ok don't actually loop forever

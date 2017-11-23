@@ -50,10 +50,19 @@ class SpectScaler:
         and then dividing by standard deviation
         """
 
-        transformed = spect - self.columnMeans
-        # to keep any zero stds from causing NaNs
-        transformed[:, self.nonZeroStd] = (
-            transformed[:, self.nonZeroStd] / self.columnStds[self.nonZeroStd])
+        if spect.ndim == 2:
+            transformed = spect - self.columnMeans
+            # to keep any zero stds from causing NaNs
+            transformed[:, self.nonZeroStd] = (
+                transformed[:, self.nonZeroStd] / self.columnStds[self.nonZeroStd])
+        elif spect.ndim == 3:
+            transformed = np.copy(spect)
+            for ind in np.arange(spect.shape[0]):
+                transformed[ind] = spect[ind] - self.columnMeans
+                # to keep any zero stds from causing NaNs
+                transformed[ind][:, self.nonZeroStd] = (
+                    transformed[ind][:, self.nonZeroStd] / self.columnStds[
+                        self.nonZeroStd])
         return transformed
 
     def transform(self, spects):
@@ -86,6 +95,7 @@ class SpectScaler:
                                  'i.e. the number of columns from the spectrogram'
                                  'to which the scaler was fit originally')
             return self._transform(spects)
+
 
         elif type(spects) == list:
             z_norm_spects = []
@@ -228,8 +238,6 @@ def load_data(labels_mapping,
                          'no value specified for syl_spect_width')
 
     all_song_spects = []
-    if return_syl_spects:
-        all_syl_spects = []
     all_labels = []
     all_labeled_timebin_vecs = []
     counter = 0
@@ -291,7 +299,11 @@ def load_data(labels_mapping,
                                          onsets,
                                          offsets,
                                          syl_spect_width)
-            all_syl_spects.append(syl_spects)
+            if 'all_syl_spects' in locals():
+                all_syl_spects = np.concatenate((all_syl_spects, syl_spects),
+                                                axis=0)
+            else:
+                all_syl_spects = syl_spects
 
         counter = counter + 1
         cbins_used.append(cbin)
