@@ -11,6 +11,9 @@ import tensorflow as tf
 from tensorflow.python import debug as tf_debug
 import numpy as np
 from sklearn.externals import joblib
+from keras.utils import to_categorical
+import keras.layers
+import keras.models
 
 import fcn.models
 import fcn.utils
@@ -101,12 +104,12 @@ if __name__ == "__main__":
                                      encoder_input_width)
     # unpack returned tuple
     if return_syl_spects:
-        (song_spects, all_labeled_timebin_vectors,
+        (song_spects, all_labeled_timebin_vectors, masks,
          syl_spects, all_labels,
          timebin_dur, cbins_used) = return_tup
         syl_spects_copy = copy.deepcopy(syl_spects)  # to use for normalizing
     else:
-        (song_spects, all_labeled_timebin_vectors,
+        (song_spects, all_labeled_timebin_vectors, masks,
          timebin_dur, cbins_used) = return_tup
     cbins_used_filename = os.path.join(results_dirname, 'cbins_used')
     with open(cbins_used_filename, 'wb') as cbins_used_file:
@@ -144,8 +147,8 @@ if __name__ == "__main__":
     X_train = np.concatenate(train_spects, axis=1)
     # save training set to get training accuracy in summary.py
     joblib.dump(X_train, os.path.join(results_dirname, 'X_train'))
-    Y_train = np.concatenate(all_labeled_timebin_vectors[:num_train_songs],
-                             axis=0)
+    Y_train = masks[:, :X_train.shape[-1], :]
+    assert Y_train.shape[-1] == len(label_mapping) + 1
 
     num_replicates = int(config['TRAIN']['replicates'])
     REPLICATES = range(num_replicates)
@@ -243,15 +246,17 @@ if __name__ == "__main__":
                       'wb') as train_inds_file:
                 pickle.dump(train_inds, train_inds_file)
             X_train_subset = X_train[:, train_inds]
-            Y_train_subset = Y_train[train_inds]
+            Y_train_subset = Y_train[:, train_inds, :]
 
             if normalize_spectrograms:
                 spect_scaler = fcn.utils.SpectScaler()
                 X_train_subset = spect_scaler.fit_transform(X_train_subset.T)
-                logger.info('normalizing individual syllable spectrograms')
-                syl_spects = np.transpose(syl_spects_copy, axes=[0, 2, 1])
-                syl_spects = spect_scaler.transform(syl_spects)
-                syl_spects = np.transpose(syl_spects_copy, axes=[0, 2, 1])
+                X_train_subset = X_train_subset.T
+                if train_encoder:
+                    logger.info('normalizing individual syllable spectrograms')
+                    syl_spects = np.transpose(syl_spects_copy, axes=[0, 2, 1])
+                    syl_spects = spect_scaler.transform(syl_spects)
+                    syl_spects = np.transpose(syl_spects_copy, axes=[0, 2, 1])
                 logger.info('normalizing validation set to match training set')
                 X_val = spect_scaler.transform([x_val_spec.T
                                                 for x_val_spec in X_val_copy])
@@ -262,18 +267,67 @@ if __name__ == "__main__":
                 joblib.dump(spect_scaler,
                             os.path.join(results_dirname, scaler_name))
 
+            if train_encoder:
+                num_syl_spects = int(config['TRAIN']['num_syl_spects'])
+                X_train_syl_spects = syl_spects[:num_syl_spects]
+                X_train_syl_spects = np.expand_dims(X_train_syl_spects, -1)
+                all_labels = np.concatenate(all_labels)
+                Y_train_syl_spects = all_labels[:num_syl_spects]
+                # first, train CNN to classify syllables.
+                # Will use those weights for encoder in FCN
+                fw = fcn.models.flatwindow(input_shape=X_train_syl_spects.shape[1:],
+                                           num_label_classes=len(label_mapping) + 1)
+                Y_train_syl_spects = to_categorical(Y_train_syl_spects)
+                encoder_epochs = int(config['TRAIN']['encoder_epochs'])
+                encoder_batch_size = int(config['TRAIN']['encoder_batch_size'])
+                fw.fit(X_train_syl_spects,
+                       Y_train_syl_spects,
+                       batch_size=encoder_batch_size,
+                       epochs=encoder_epochs,
+                       validation_split=0.2)
+                weights_filename = os.path.join(training_records_dirname,
+                                                'encoder_weights.h5')
 
-            batch_spec_rows = len(train_inds) // batch_size
-            X_train_subset = \
-                X_train_subset[0:batch_spec_rows * batch_size].reshape((batch_size,
-                                                                        batch_spec_rows,
-                                                                        -1))
-            Y_train_subset = \
-                Y_train_subset[0:batch_spec_rows * batch_size].reshape((batch_size,
-                                                                        -1))
-            iter_order = np.random.permutation(X_train.shape[1] - time_steps)
-            if len(iter_order) > n_max_iter:
-                iter_order = iter_order[0:n_max_iter]
+            fw_for_fcn = fcn.models.flatwindow(input_shape=X_train_syl_spects.shape[1:],
+                                           num_label_classes=len(label_mapping) + 1)
+            fcn_width = int(config['TRAIN']['fcn_width'])
+            n = np.arange(start=fcn_width,
+                          stop=X_train_subset.shape[-1],
+                          step=fcn_width)
+            X_train_subset = np.stack(np.split(X_train_subset, n, axis=1))
+            X_train_subset = X_train_subset[:, :, :, np.newaxis]
+            Y_train_subset = np.stack(np.split(Y_train_subset, n, axis=1))
+
+            fcn_custom_input_shape = X_train_subset.shape[1:]
+
+            inputs = keras.layers.Input(shape=fcn_custom_input_shape)
+            blocks = [fcn.models.fw_conv1(),
+                      fcn.models.fw_conv1(),
+                      fcn.models.fw_conv2(),
+                      fcn.keras_fcn.blocks.vgg_fc(fw_for_fcn.layers[-4].get_config()['units'])]
+            encoder = fcn.keras_fcn.encoders.Encoder(inputs,
+                                                     blocks,
+                                                     weights=weights_filename,
+                                                     trainable=True)
+            feat_pyramid = encoder.outputs  # A feature pyramid with 5 scales
+            feat_pyramid.append(
+                inputs)  # Add image to the bottom of the pyramid
+
+            outputs = fcn.keras_fcn.decoders.VGGUpsampler(feat_pyramid,
+                                                          scales=[1, 1e-2, 1e-4],
+                                                          classes=len(label_mapping) + 1)
+            outputs = keras.layers.Activation('softmax')(outputs)
+
+            fcn_custom = keras.models.Model(inputs=inputs, outputs=outputs)
+
+            fcn_custom.compile(optimizer='rmsprop',
+                               loss='categorical_crossentropy',
+                               metrics=['accuracy'])
+            fcn_custom.fit(X_train_subset, Y_train_subset,
+                           batch_size=1, epochs=400)
+            fcn_custom.save_weights('gy6or6_flatwindow_fcn2.h5')
+
+            import pdb;pdb.set_trace()
 
             input_vec_size = X_train_subset.shape[-1]  # number of columns
             logger.debug('input vec size: '.format(input_vec_size))

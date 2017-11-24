@@ -189,6 +189,34 @@ def make_labeled_timebins_vector(labels,
     return label_vec
 
 
+def make_mask(spect_shape, onsets, offsets, timebins, labels, num_classes,
+              silent_gap_label=0):
+    """makes mask for a song spectrogram,
+    the same size as the spectrogram
+    but the value of each 'pixel'/bin in the mask is a label,
+    either the name of a song syllable or the silent gap label.
+    Mask values based on onsets/offsets.
+    """
+    mask = np.zeros((spect_shape) + (num_classes,))
+    onset_in_time_bins = [np.argmin(np.abs(timebins - onset))
+                          for onset in onsets]
+    offset_in_time_bins = [np.argmin(np.abs(timebins - offset))
+                           for offset in offsets]
+    for onset, offset, label in zip(onset_in_time_bins,
+                                    offset_in_time_bins,
+                                    labels):
+        mask[:, onset:offset + 1, label] = 1
+
+    # then do silent gaps
+    mask[:, 0:onset_in_time_bins[0], silent_gap_label] = 1
+    mask[:, offset_in_time_bins[-1] + 1:-1, silent_gap_label] = 1
+    for offset, onset in zip(offset_in_time_bins[:-1],
+                             onset_in_time_bins[1:]):
+        mask[:, offset + 1:onset, silent_gap_label] = 1
+
+    return mask
+
+
 def load_data(labels_mapping,
               data_dir,
               number_files,
@@ -233,6 +261,7 @@ def load_data(labels_mapping,
         estimated from last spectrogram processed
     """
 
+    num_classes = len(labels_mapping) + 1  # add 1 for silent label
     if return_syl_spects and syl_spect_width is None:
         raise ValueError('return_syl_spects set to True but '
                          'no value specified for syl_spect_width')
@@ -291,6 +320,17 @@ def load_data(labels_mapping,
         all_labels.append(labels)
         all_labeled_timebin_vecs.append(labeled_timebin_vec)
 
+        mask = make_mask(spect.shape,
+                         onsets,
+                         offsets,
+                         timebins,
+                         labels,
+                         num_classes)
+        if 'masks' in locals():
+            masks = np.concatenate((masks, mask), axis=1)
+        else:
+            masks = mask
+
         if return_syl_spects:
             syl_spects = make_syl_spects(spect,
                                          cbin,
@@ -316,7 +356,7 @@ def load_data(labels_mapping,
                          .format(number_files, data_dir))
     timebin_dur = np.around(np.mean(np.diff(timebins)), decimals=3)
 
-    return_tup = (all_song_spects, all_labeled_timebin_vecs)
+    return_tup = (all_song_spects, all_labeled_timebin_vecs, masks)
     if return_syl_spects:
         return_tup += (all_syl_spects, all_labels)
     return_tup += (timebin_dur, cbins_used)
