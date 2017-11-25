@@ -147,6 +147,12 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
 
         # now that we normalized, we can reshape
         fcn_width = int(config['TRAIN']['fcn_width'])
+        if X_train_subset.shape[-1] % fcn_width != 0:
+            raise ValueError('Duration of X_train_subset, {}, '
+                             'is not evenly divisible into segments of'
+                             'width specified for FCN, {}.\nWould result in loss of'
+                             'training data.'
+                             .format(X_train_subset.shape[-1], fcn_width))
         n = np.arange(start=fcn_width,
                       stop=X_train_subset.shape[-1],
                       step=fcn_width)
@@ -154,9 +160,11 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
         X_train_subset = X_train_subset[:, :, :, np.newaxis]
         Y_train_subset = np.stack(np.split(Y_train_subset, n, axis=1))
         # below don't keep last array because it might be less wide than fcn_width
+        # since test set is not guaranteed to be of length
+        # evenly divisible by fcn_width
         X_test = np.stack(np.split(X_test, n, axis=1)[:-1])
         X_test = X_test[:, :, :, np.newaxis]
-        Y_test = np.stack(np.split(Y_test, n, axis=1))
+        Y_test = np.stack(np.split(Y_test, n, axis=1)[:-1])
 
 
         model_filename = os.path.join(training_records_dir,

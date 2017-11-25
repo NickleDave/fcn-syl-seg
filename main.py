@@ -249,6 +249,12 @@ if __name__ == "__main__":
             fw_for_fcn = fcn.models.flatwindow(input_shape=X_train_syl_spects.shape[1:],
                                            num_label_classes=len(label_mapping) + 1)
             fcn_width = int(config['TRAIN']['fcn_width'])
+            if X_train_subset.shape[-1] % fcn_width != 0:
+                raise ValueError('Duration of X_train_subset, {}, '
+                                 'is not evenly divisible into segments of'
+                                 'width specified for FCN, {}.\nWould result in loss of'
+                                 'training data.'
+                                 .format(X_train_subset.shape[-1], fcn_width))
             n = np.arange(start=fcn_width,
                           stop=X_train_subset.shape[-1],
                           step=fcn_width)
