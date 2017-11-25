@@ -107,6 +107,7 @@ if __name__ == "__main__":
          syl_spects, all_labels,
          timebin_dur, cbins_used) = return_tup
         syl_spects_copy = copy.deepcopy(syl_spects)  # to use for normalizing
+        all_labels = np.concatenate(all_labels)
     else:
         (song_spects, all_labeled_timebin_vectors, masks,
          timebin_dur, cbins_used) = return_tup
@@ -228,7 +229,6 @@ if __name__ == "__main__":
                 num_syl_spects = int(config['TRAIN']['num_syl_spects'])
                 X_train_syl_spects = syl_spects[:num_syl_spects]
                 X_train_syl_spects = np.expand_dims(X_train_syl_spects, -1)
-                all_labels = np.concatenate(all_labels)
                 Y_train_syl_spects = all_labels[:num_syl_spects]
                 # first, train CNN to classify syllables.
                 # Will use those weights for encoder in FCN
@@ -295,7 +295,7 @@ if __name__ == "__main__":
                            batch_size=fcn_batch_size,
                            epochs=fcn_epochs,
                            callbacks=[tb])
-            fcn_weights_filename = os.path.join(training_records_dirname,
-                                                'fcn_weights.h5')
-            fcn_custom.save_weights(fcn_weights_filename)
+            fcn_model_filename = os.path.join(training_records_dirname,
+                                              'fcn_model.h5')
+            fcn_custom.save(fcn_model_filename)
 
