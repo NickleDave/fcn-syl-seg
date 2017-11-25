@@ -87,8 +87,8 @@ print('loading testing data')
 test_data_dir = config['DATA']['test_data_dir']
 number_test_song_files = int(config['DATA']['number_test_song_files'])
 return_tup = fcn.utils.load_data(label_mapping,
-                                 train_data_dir,
-                                 number_train_song_files,
+                                 test_data_dir,
+                                 number_test_song_files,
                                  spect_params,
                                  skip_files_with_labels_not_in_labelset,
                                  return_syl_spects,
@@ -137,6 +137,7 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
         Y_train_subset = Y_train[:, train_inds, :]
         # normalize before reshaping to avoid even more convoluted array reshaping
         if normalize_spectrograms:
+            print('normalizing spectrograms')
             scaler_name = ('spect_scaler_duration_{}_replicate_{}'
                            .format(train_set_dur, replicate))
             spect_scaler = joblib.load(os.path.join(results_dirname, scaler_name))
@@ -153,7 +154,7 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
         X_train_subset = X_train_subset[:, :, :, np.newaxis]
         Y_train_subset = np.stack(np.split(Y_train_subset, n, axis=1))
         # below don't keep last array because it might be less wide than fcn_width
-        X_test = np.stack(np.split(X_test, n, axis=1)[-1])
+        X_test = np.stack(np.split(X_test, n, axis=1)[:-1])
         X_test = X_test[:, :, :, np.newaxis]
         Y_test = np.stack(np.split(Y_test, n, axis=1))
 
@@ -167,6 +168,7 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
         outputs2 = Activation('softmax')(outputs2)
         fcn_custom2 = Model(inputs=fcn.input, outputs=outputs2)
         # optimizer='SGD' is not conservative enough, it can fail during training
+        import pdb;pdb.set_trace()
         fcn_custom2.compile(optimizer='rmsprop',
                             loss='categorical_crossentropy',
                             metrics=['accuracy'])
