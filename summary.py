@@ -11,6 +11,8 @@ from keras import backend as K
 from keras.layers import Lambda, Activation
 
 import fcn.utils
+from fcn import keras_fcn
+from keras import Model
 
 config_file = sys.argv[1]
 if not config_file.endswith('.ini'):
@@ -100,14 +102,14 @@ cbins_used_filename = os.path.join(results_dirname, 'test_cbins_used')
 with open(cbins_used_filename, 'wb') as cbins_used_file:
     pickle.dump(cbins_used, cbins_used_file)
 
-X_test = np.concatenate(test_song_spects, axis=1)
-# copy X_test because it gets scaled and reshape in main loop
-X_test_copy = np.copy(X_test)
-Y_test = np.concatenate(test_masks, axis=1)
-# also need copy of Y_test
-# because it also gets reshaped in loop
-# and because we need to compare with Y_pred
-Y_test_copy = np.copy(Y_test)
+# X_test_copy because X_test gets scaled and reshaped in main loop
+X_test_copy = np.concatenate(test_song_spects, axis=1)
+# make Y_test here because it doesn't change
+fcn_width = int(config['TRAIN']['fcn_width'])
+inds_to_split_Y_test = np.arange(start=fcn_width,
+                                 stop=test_masks.shape[1],
+                                 step=fcn_width)
+Y_test = np.stack(np.split(test_masks, inds_to_split_Y_test, axis=1)[:-1])
 
 normalize_spectrograms = config.getboolean('DATA', 'normalize_spectrograms')
 
@@ -143,10 +145,9 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
             spect_scaler = joblib.load(os.path.join(results_dirname, scaler_name))
             X_train_subset = spect_scaler.transform(X_train_subset.T).T
             X_test = spect_scaler.transform(X_test_copy.T).T
-            Y_test = np.copy(Y_test_copy)
 
         # now that we normalized, we can reshape
-        fcn_width = int(config['TRAIN']['fcn_width'])
+        # note we loaded fcn_width from .ini file above
         if X_train_subset.shape[-1] % fcn_width != 0:
             raise ValueError('Duration of X_train_subset, {}, '
                              'is not evenly divisible into segments of'
@@ -162,9 +163,13 @@ for dur_ind, train_set_dur in enumerate(TRAIN_SET_DURS):
         # below don't keep last array because it might be less wide than fcn_width
         # since test set is not guaranteed to be of length
         # evenly divisible by fcn_width
-        X_test = np.stack(np.split(X_test, n, axis=1)[:-1])
+        inds_to_split_X_test = np.arange(start=fcn_width,
+                                 stop=X_test_copy.shape[-1],
+                                 step=fcn_width)
+        # sanity check
+        assert np.array_equal(inds_to_split_X_test, inds_to_split_Y_test)
+        X_test = np.stack(np.split(X_test_copy, inds_to_split_X_test, axis=1)[:-1])
         X_test = X_test[:, :, :, np.newaxis]
-        Y_test = np.stack(np.split(Y_test, n, axis=1)[:-1])
 
 
         model_filename = os.path.join(training_records_dir,
