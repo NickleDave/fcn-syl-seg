@@ -64,11 +64,8 @@ class Encoder(Model):
 
         # load pre-trained weights
         if weights is not None:
-            weights_path = get_file(
-                '{}_weights_tf_dim_ordering_tf_kernels.h5'.format(name),
-                weights,
-                cache_subdir='models')
-            layer_names = load_weights(self, weights_path)
+            # changed to assume weights is local
+            layer_names = load_weights(self, weights)
             if K.image_data_format() == 'channels_first':
                 layer_utils.convert_all_kernels_in_model(self)
 

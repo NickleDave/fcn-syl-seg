@@ -177,48 +177,6 @@ if __name__ == "__main__":
     Y_val = all_labeled_timebin_vectors[-num_val_songs:]
     Y_val_arr = np.concatenate(Y_val, axis=0)
 
-    val_error_step = int(config['TRAIN']['val_error_step'])
-    logger.info('will measure error on validation set '
-                'every {} steps of training'.format(val_error_step))
-    checkpoint_step = int(config['TRAIN']['checkpoint_step'])
-    logger.info('will save a checkpoint file '
-                'every {} steps of training'.format(checkpoint_step))
-    save_only_single_checkpoint_file = config.getboolean('TRAIN',
-                                                         'save_only_single_'
-                                                         'checkpoint_file')
-    if save_only_single_checkpoint_file:
-        logger.info('save_only_single_checkpoint_file = True\n'
-                    'will save only one checkpoint file'
-                    'and overwrite every {} steps of training'
-                    .format(checkpoint_step))
-    else:
-        logger.info('save_only_single_checkpoint_file = False\n'
-                    'will save a separate checkpoint file '
-                    'every {} steps of training'.format(checkpoint_step))
-
-    patience = config['TRAIN']['patience']
-    try:
-        patience = int(patience)
-    except ValueError:
-        if patience == 'None':
-            patience = None
-        else:
-            raise TypeError('patience must be an int or None, but'
-                            'is {} and parsed as type {}'
-                            .format(patience, type(patience)))
-    logger.info('\'patience\' is set to: {}'.format(patience))
-
-    # set params used for sending data to graph in batches
-    batch_size = int(config['NETWORK']['batch_size'])
-    time_steps = int(config['NETWORK']['time_steps'])
-    logger.info('will train network with batches of size {}, '
-                'where each spectrogram in batch contains {} time steps'
-                .format(batch_size, time_steps))
-
-    n_max_iter = int(config['TRAIN']['n_max_iter'])
-    logger.info('maximum number of training steps will be {}'
-                .format(n_max_iter))
-
     normalize_spectrograms = config.getboolean('DATA', 'normalize_spectrograms')
     if normalize_spectrograms:
         logger.info('will normalize spectrograms for each training set')
@@ -287,6 +245,7 @@ if __name__ == "__main__":
                        validation_split=0.2)
                 weights_filename = os.path.join(training_records_dirname,
                                                 'encoder_weights.h5')
+                fw.save_weights(weights_filename)
 
             fw_for_fcn = fcn.models.flatwindow(input_shape=X_train_syl_spects.shape[1:],
                                            num_label_classes=len(label_mapping) + 1)
@@ -323,14 +282,12 @@ if __name__ == "__main__":
             fcn_custom.compile(optimizer='rmsprop',
                                loss='categorical_crossentropy',
                                metrics=['accuracy'])
-            fcn_batch_size = config['TRAIN']['fcn_batch_size']
-            fcn_epochs = config['TRAIN']['fcn_epochs']
+            fcn_batch_size = int(config['TRAIN']['fcn_batch_size'])
+            fcn_epochs = int(config['TRAIN']['fcn_epochs'])
             fcn_custom.fit(X_train_subset, Y_train_subset,
                            batch_size=fcn_batch_size,
                            epochs=fcn_epochs)
             fcn_weights_filename = os.path.join(training_records_dirname,
                                                 'fcn_weights.h5')
             fcn_custom.save_weights(fcn_weights_filename)
-
-            import pdb;pdb.set_trace()
 
