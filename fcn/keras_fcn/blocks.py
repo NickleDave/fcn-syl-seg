@@ -11,7 +11,8 @@ from keras.layers.convolutional import (
 )
 from keras.layers.merge import add
 from keras.regularizers import l2
-from keras_fcn.layers import CroppingLike2D, BilinearUpSampling2D
+
+from .layers import CroppingLike2D, BilinearUpSampling2D
 
 
 def vgg_conv(filters, convs, padding=False, weight_decay=0., block_name='blockx'):

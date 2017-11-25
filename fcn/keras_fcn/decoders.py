@@ -10,8 +10,8 @@ from keras.layers.convolutional import (
     Conv2D
 )
 
-from keras_fcn.layers import CroppingLike2D
-from keras_fcn.blocks import (
+from .layers import CroppingLike2D
+from .blocks import (
     vgg_deconv,
     vgg_score,
     vgg_upsampling

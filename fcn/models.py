@@ -6,9 +6,9 @@ from keras.callbacks import EarlyStopping
 from keras import backend as K
 
 
-from keras_fcn.encoders import Encoder
-from keras_fcn.decoders import VGGUpsampler
-from keras_fcn.blocks import (vgg_conv, vgg_fc)
+from .keras_fcn.encoders import Encoder
+from .keras_fcn.decoders import VGGUpsampler
+from .keras_fcn.blocks import (vgg_conv, vgg_fc)
 
 
 def conv_out_size(w, f, p, s): return (w-f+2*p) / s + 1

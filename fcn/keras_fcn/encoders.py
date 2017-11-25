@@ -5,11 +5,11 @@ from keras.models import Model
 from keras.utils.data_utils import get_file
 from keras.utils import layer_utils
 
-from keras_fcn.blocks import (
+from .blocks import (
     vgg_conv,
     vgg_fc
 )
-from keras_fcn.backend import load_weights
+from .backend import load_weights
 
 
 class Encoder(Model):

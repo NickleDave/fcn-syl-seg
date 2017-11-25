@@ -7,13 +7,12 @@ import pickle
 from datetime import datetime
 from configparser import ConfigParser, NoOptionError
 
-import tensorflow as tf
-from tensorflow.python import debug as tf_debug
 import numpy as np
 from sklearn.externals import joblib
 from keras.utils import to_categorical
 import keras.layers
 import keras.models
+import keras.callbacks
 
 import fcn.models
 import fcn.utils
@@ -34,7 +33,7 @@ if __name__ == "__main__":
                                        'results_' + timenow)
     else:
         results_dirname = os.path.join('.', 'results_' + timenow)
-    os.mkdir(results_dirname)
+    os.makedirs(results_dirname)
     # copy config file into results dir now that we've made the dir
     shutil.copy(config_file, results_dirname)
 
@@ -196,7 +195,7 @@ if __name__ == "__main__":
                                    '_sec_replicate_'
                                    + str(replicate))
             if not os.path.isdir(training_records_dirname):
-                os.mkdir(training_records_dirname)
+                os.makedirs(training_records_dirname)
             train_inds = fcn.utils.get_inds_for_dur(X_train_timebins,
                                                     train_set_dur,
                                                     timebin_dur)
@@ -279,6 +278,14 @@ if __name__ == "__main__":
 
             fcn_custom = keras.models.Model(inputs=inputs, outputs=outputs)
 
+            logs_dir = os.path.join(training_records_dirname,'logs')
+            if not os.path.isdir(logs_dir):
+                os.makedirs(logs_dir)
+            tb = keras.callbacks.TensorBoard(log_dir=logs_dir, histogram_freq=0,
+                                        batch_size=32, write_graph=True,
+                                        write_grads=False, write_images=False,
+                                        embeddings_freq=0, embeddings_layer_names=None,
+                                        embeddings_metadata=None)
             fcn_custom.compile(optimizer='rmsprop',
                                loss='categorical_crossentropy',
                                metrics=['accuracy'])
@@ -286,7 +293,8 @@ if __name__ == "__main__":
             fcn_epochs = int(config['TRAIN']['fcn_epochs'])
             fcn_custom.fit(X_train_subset, Y_train_subset,
                            batch_size=fcn_batch_size,
-                           epochs=fcn_epochs)
+                           epochs=fcn_epochs,
+                           callbacks=[tb])
             fcn_weights_filename = os.path.join(training_records_dirname,
                                                 'fcn_weights.h5')
             fcn_custom.save_weights(fcn_weights_filename)
